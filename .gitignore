@@ -1,0 +1,17 @@
+# Dépendances et sorties locales
+node_modules/
+Chrome-Extension/node_modules/
+*.zip
+*.mp3
+
+# Traces et profils de navigateur locaux
+*.log
+.DS_Store
+Thumbs.db
+Chrome-Extension/test-profile/
+Chrome-Extension/.cache/
+
+# Paramètres ou secrets locaux éventuels
+.env
+.env.*
+!.env.example
