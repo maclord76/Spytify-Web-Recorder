@@ -19,6 +19,12 @@ Merci de contribuer au projet. Les modifications doivent rester ciblées, compr�
    npm.cmd --prefix Chrome-Extension test
    ```
 
+   La commande commence par un contrôle du projet : une nouvelle version doit
+   être reportée dans `manifest.json`, `package.json`, `README.md`,
+   `SECURITY.md`, `TECHNIQUE.md` et `Chrome-Extension/README.md`, et chaque
+   nouvelle suite `tests/*.test.mjs` doit être ajoutée au script `test`. GitHub
+   Actions exécute la même commande sur chaque pull request.
+
 4. Si votre modification touche l'interface, le lecteur, la capture ou la finalisation MP3, testez aussi manuellement le parcours pertinent dans Chrome avec Spotify Web lorsque c'est possible.
 5. Indiquez dans la proposition de modification ce qui a été testé et ce qui ne l'a pas été. Les tests Node ne valident pas une capture Spotify réelle.
 

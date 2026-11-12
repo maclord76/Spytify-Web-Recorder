@@ -1,10 +1,11 @@
 {
   "name": "spytify-web-recorder",
-  "version": "1.14.4",
+  "version": "1.18.5",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/core.test.mjs && node tests/content.test.mjs && node tests/player-control.test.mjs && node tests/playback-verification.test.mjs && node tests/audio-worklet.test.mjs && node tests/offscreen-armed.test.mjs && node tests/side-panel.test.mjs && node tests/authorize.test.mjs",
+    "test": "node tests/project-check.mjs && node tests/core.test.mjs && node tests/content.test.mjs && node tests/player-control.test.mjs && node tests/playback-verification.test.mjs && node tests/audio-worklet.test.mjs && node tests/offscreen-capture.test.mjs && node tests/side-panel.test.mjs && node tests/authorize.test.mjs && node tests/monitoring.test.mjs && node tests/offscreen-monitor.test.mjs && node tests/background-monitor.test.mjs && node tests/popup-monitor.test.mjs && node tests/advertisement.test.mjs && node tests/recovery.test.mjs && node tests/player-languages.test.mjs && node tests/content-observation.test.mjs",
+    "check": "node tests/project-check.mjs",
     "test:popup": "node tests/popup-smoke.mjs",
     "test:worklet": "node tests/audio-worklet-smoke.mjs"
   }

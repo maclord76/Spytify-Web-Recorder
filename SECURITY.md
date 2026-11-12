@@ -2,7 +2,7 @@
 
 ## Versions prises en charge
 
-Seule la version présente sur la branche principale est maintenue. La version actuelle déclarée par l'extension est **1.14.4**.
+Seule la version présente sur la branche principale est maintenue. La version actuelle déclarée par l'extension est **1.18.5**.
 
 ## Signaler une vulnérabilité
 

@@ -66,4 +66,8 @@ function virtualClock() {
   assert.equal(confirmed, false, "un autre morceau ne doit jamais être accepté");
 }
 
+// Une publicité précède le morceau : Spotify l'enchaînera, aucun clic n'est utile.
+assert.equal(await waitForConfirmedPlayback(async () => ({ title: "Publicité", isPlaying: true, advertisement: true }),
+  "Titre", { now: () => 0, wait: async () => {} }), true);
+
 console.log("Tests de confirmation de lecture réussis");

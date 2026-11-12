@@ -9,11 +9,11 @@ document.querySelector("#close-authorization").addEventListener("click", () => w
 async function authorize() {
   const response = await chrome.runtime.sendMessage({ type: "AUTHORIZE_CAPTURE" });
   if (!response?.ok) throw new Error(response?.error || "La capture n'a pas répondu.");
-  if (response.state?.phase === "prepared") {
+  if (response.state?.monitoring) {
     window.close();
     return;
   }
-  status.textContent = response.state?.message || "Reprenez l'étape 2 dans le panneau Spytify.";
+  status.textContent = response.state?.message || "Relancez l'enregistrement depuis le panneau Spytify.";
 }
 
 authorize().catch(error => {

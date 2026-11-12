@@ -57,29 +57,14 @@ const initial = await evaluate(`({
 if (
   initial.heading !== "Spytify Web" ||
   !initial.startVisible ||
-  !initial.startText?.includes("Préparer le morceau")
+  initial.startText !== "Enregistrer le morceau"
 ) {
   throw new Error(`Interface inattendue: ${JSON.stringify(initial)}`);
 }
 
-await evaluate(`import(chrome.runtime.getURL('popup.js')).then((module) => {
-  module.renderState({
-    phase: 'prepared',
-    recording: false,
-    elapsedSeconds: 0,
-    metadata: { title: 'Titre', artist: 'Artiste' },
-    message: 'Morceau préparé'
-  });
-})`);
-await new Promise((resolve) => setTimeout(resolve, 100));
-const preparedButton = await evaluate("document.querySelector('#start-recording')?.textContent");
-if (!preparedButton.includes("Démarrer l'enregistrement")) {
-  throw new Error(`Bouton préparé inattendu: ${preparedButton}`);
-}
-
 await evaluate(`(() => {
   document.querySelector('#track-url').value = 'adresse incorrecte';
-  document.querySelector('#open-track').click();
+  document.querySelector('#start-recording').click();
 })()`);
 await new Promise((resolve) => setTimeout(resolve, 150));
 const validationMessage = await evaluate("document.querySelector('#status-message')?.textContent");

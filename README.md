@@ -2,15 +2,15 @@
 
 Extension Chrome autonome qui enregistre localement l'audio de l'onglet Spotify Web actif et génère un fichier MP3. Aucun programme compagnon et aucun serveur ne sont utilisés.
 
-> **Statut — version 1.14.4.** Le code et les tests automatisés couvrent le parcours de l'extension. Un enregistrement réel reste à valider dans Chrome, avec un compte Spotify Web, après chaque évolution importante du lecteur Spotify ou de Chrome.
+> **Statut — version 1.18.5.** Le code et les tests automatisés couvrent les modes morceau individuel et surveillance. Un enregistrement réel reste à valider dans Chrome, avec un compte Spotify Web, après chaque évolution importante du lecteur Spotify ou de Chrome.
 
 ## Ce que fait l'extension
 
-- ouvre une URL de morceau Spotify dans un onglet Chrome ;
-- prépare la capture de cet onglet à la demande de l'utilisateur ;
-- pilote la lecture puis encode localement l'audio en MP3 ;
+- enregistre un morceau en un clic à partir de son URL : la capture de l'onglet écoute déjà pendant le chargement de la page, et la lecture n'est lancée automatiquement que si Spotify ne l'a pas fait lui-même ;
+- encode localement l'audio en MP3 ;
 - renseigne les balises du fichier quand les métadonnées sont disponibles ;
 - arrête l'enregistrement à la fin du morceau, lors du passage au suivant, ou à l'arrêt manuel.
+- propose un mode **Surveillance** qui conserve le flux et télécharge un MP3 par morceau lancé manuellement ou lu par une playlist ; les publicités détectées sont exclues, les pauses gardent la session active et les morceaux incomplets portent la mention **(extrait)**.
 
 Les fichiers sont téléchargés dans `Téléchargements/Spytify Web/`.
 
@@ -60,7 +60,7 @@ Utilisez cette extension uniquement pour les contenus que vous êtes autorisé �
 
 ## Licence
 
-La licence du code du projet n'est pas encore définie. En l'absence d'un fichier `LICENSE`, aucun droit de réutilisation n'est accordé par ce dépôt. La dépendance incluse lamejs est couverte séparément : voir [Chrome-Extension/THIRD_PARTY_NOTICES.md](Chrome-Extension/THIRD_PARTY_NOTICES.md).
+Spytify Web Recorder est un projet personnel, non destiné à la diffusion. Le dépôt ne contient volontairement pas de fichier `LICENSE` : aucun droit de réutilisation n'est accordé. La dépendance incluse lamejs est couverte séparément : voir [Chrome-Extension/THIRD_PARTY_NOTICES.md](Chrome-Extension/THIRD_PARTY_NOTICES.md).
 
 ## Contribuer et sécurité
 

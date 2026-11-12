@@ -39,21 +39,65 @@ export function parseSpotifyTrackUrl(value) {
   };
 }
 
-export function sanitizeFilename(value) {
+// Nom sans dossier ni extension, en unités UTF-16 comme les chemins Windows :
+// avec le dossier Téléchargements, « Spytify Web\ », « .mp3 » et un éventuel
+// « (12) » ajouté par Chrome, le chemin reste loin des 260 caractères.
+export const MAX_FILENAME_LENGTH = 120;
+const MAX_ARTIST_LENGTH = 60;
+
+function graphemes(value) {
+  if (typeof Intl?.Segmenter === "function") {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value), (part) => part.segment);
+  }
+  return Array.from(value);
+}
+
+// Couper entre deux caractères visibles, jamais au milieu d'un emoji, d'une
+// lettre accentuée décomposée ou d'une paire de substitution UTF-16.
+function truncateText(value, maxLength) {
+  if (value.length <= maxLength) return value;
+  let result = "";
+  for (const grapheme of graphemes(value)) {
+    if (result.length + grapheme.length > maxLength - 1) break;
+    result += grapheme;
+  }
+  return `${result.replace(/[. ]+$/g, "")}…`;
+}
+
+export function sanitizeFilename(value, maxLength = MAX_FILENAME_LENGTH) {
   const cleaned = String(value ?? "")
     .normalize("NFC")
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
-    .replace(/[. ]+$/g, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001F\u007F]/g, "_")
+    // Les marques de direction peuvent maquiller l'extension affichée.
+    .replace(/[‎‏‪-‮⁦-⁩]/g, "")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .replace(/[. ]+$/g, "");
 
-  return (cleaned || "Enregistrement Spotify").slice(0, 160);
+  return truncateText(cleaned || "Enregistrement Spotify", maxLength);
 }
 
 export function recordingFilename(metadata) {
-  const artist = sanitizeFilename(metadata?.artist || "Artiste inconnu");
-  const title = sanitizeFilename(metadata?.title || "Morceau Spotify");
-  return `Spytify Web/${artist} - ${title}.mp3`;
+  const suffix = metadata?.partial ? " (extrait)" : "";
+  const artist = sanitizeFilename(metadata?.artist || "Artiste inconnu", MAX_ARTIST_LENGTH);
+  // Le titre reçoit toute la place laissée par l'artiste, au moins 47 unités.
+  const title = sanitizeFilename(
+    metadata?.title || "Morceau Spotify",
+    MAX_FILENAME_LENGTH - artist.length - " - ".length - suffix.length
+  );
+  return `Spytify Web/${artist} - ${title}${suffix}.mp3`;
+}
+
+// Durée « mm:ss » du compteur et des MP3 téléchargés.
+export function formatDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+// Nom d'un MP3 téléchargé, sans son dossier, suivi de sa durée enregistrée.
+export function describeRecording(filename, durationSeconds) {
+  const name = String(filename || "").replace(/^Spytify Web\//, "");
+  return Number.isFinite(durationSeconds) ? `${name} (${formatDuration(durationSeconds)})` : name;
 }
 
 export function metadataSignature(metadata) {

@@ -14,8 +14,8 @@ globalThis.chrome = { runtime: {
   async sendMessage(message) { request = message; return response; }
 } };
 const flush = () => new Promise(resolve => setImmediate(resolve));
-response = { ok: true, state: { phase: "prepared" } };
-await import("../authorize.js?prepared");
+response = { ok: true, state: { phase: "monitoring", mode: "single", monitoring: true } };
+await import("../authorize.js?single");
 await flush();
 assert.equal(request.type, "AUTHORIZE_CAPTURE");
 assert.equal(closes, 1);
@@ -31,4 +31,8 @@ await import("../authorize.js?permission");
 await flush();
 assert.equal(closes, 1);
 assert.equal(elements.get("#authorization-status").textContent, response.state.message);
+response = { ok: true, state: { phase: "monitoring", monitoring: true } };
+await import("../authorize.js?monitoring");
+await flush();
+assert.equal(closes, 2, "L'autorisation ferme aussi la fenêtre quand la surveillance est armée.");
 console.log("Fenêtre autorisation : demande explicite, fermeture après succès, erreurs visibles vérifiées.");

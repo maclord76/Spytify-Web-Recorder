@@ -1,7 +1,47 @@
 import { createId3v24Tag, recordingFilename } from "./core.js";
+import { MonitoringSession } from "./monitoring.js";
 
+// Les deux modes utilisent la même capture continue : le mode « Un morceau »
+// est une surveillance dont le service de fond ne garde que le titre demandé.
 let capture = null;
 let stopPromise = null;
+
+// Un MP3 reste lisible après son téléchargement accepté : Chrome peut encore
+// demander où l'enregistrer lorsque le téléchargement automatique a échoué.
+const BLOB_LIFETIME_MILLISECONDS = 10 * 60_000;
+
+// MP3 dont Chrome n'a pas encore confirmé l'enregistrement : le service de
+// fond ne ferme pas ce document tant qu'il en reste.
+const pendingDownloads = new Set();
+
+function createDownloadUrl(blob) {
+  const url = URL.createObjectURL(blob);
+  pendingDownloads.add(url);
+  return url;
+}
+
+function releaseDownloadUrl(url) {
+  pendingDownloads.delete(url);
+  URL.revokeObjectURL(url);
+}
+
+// Un MP3 déjà écrit est libéré aussitôt ; sinon il reste lisible le temps que
+// Chrome termine ou que l'utilisateur choisisse où l'enregistrer.
+function settleDownloadUrl(url, response) {
+  if (response?.completed) releaseDownloadUrl(url);
+  else setTimeout(() => releaseDownloadUrl(url), BLOB_LIFETIME_MILLISECONDS);
+}
+
+// Les commandes de capture viennent du service de fond ou du panneau, jamais
+// d'un onglet : un script de contenu porte toujours sender.tab.
+function isExtensionSender(sender) {
+  return !sender?.tab && (!sender?.url || sender.url.startsWith(chrome.runtime.getURL("")));
+}
+
+function isCapturedSpotifyTab(sender) {
+  return Boolean(capture) && sender?.tab?.id === capture.tabId &&
+    String(sender?.url || "").startsWith("https://open.spotify.com/");
+}
 
 function floatToInt16(channel) {
   const result = new Int16Array(channel.length);
@@ -17,7 +57,7 @@ async function loadCover(url) {
     return null;
   }
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!response.ok) return null;
     const mimeType = response.headers.get("content-type")?.split(";")[0] || "";
     if (!mimeType.startsWith("image/")) return null;
@@ -60,11 +100,11 @@ async function startCapture(message) {
     source.connect(audioContext.destination);
 
     const worklet = new AudioWorkletNode(audioContext, "pcm-capture-processor", {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    outputChannelCount: [2],
-    channelCount: 2,
-    channelCountMode: "explicit"
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+      channelCount: 2,
+      channelCountMode: "explicit"
     });
     const silentOutput = audioContext.createGain();
     silentOutput.gain.value = 0;
@@ -72,85 +112,70 @@ async function startCapture(message) {
     worklet.connect(silentOutput);
     silentOutput.connect(audioContext.destination);
 
-    const encoder = new lamejs.Mp3Encoder(2, audioContext.sampleRate, message.bitrate);
-    const chunks = [];
-    let lastProgressSecond = -1;
-
-    let flushResolve = null;
     const current = {
-    audioStarted: false,
-    audioContext,
-    chunks,
-    encoder,
-    encoding: !message.armed,
-    metadata: message.metadata,
-    get flushResolve() { return flushResolve; },
-    set flushResolve(value) { flushResolve = value; },
-    silentOutput,
-    source,
-    startedAt: message.armed ? null : performance.now(),
-    stream,
-    targetDurationSeconds: Math.max(0, Number(message.durationSeconds) || 0),
-    worklet
+      mode: "monitor",
+      audioContext,
+      flushResolve: null,
+      silentOutput,
+      source,
+      stream,
+      worklet,
+      tabId: message.tabId,
+      sessionId: message.sessionId,
+      contextEpochMs: Date.now() - audioContext.currentTime * 1000,
+      exports: Promise.resolve(),
+      exportError: null,
+      lastMonitorStatus: ""
     };
+    current.monitor = new MonitoringSession({
+      sampleRate: audioContext.sampleRate, startedAtMs: Date.now(),
+      create: () => ({ encoder: new lamejs.Mp3Encoder(2, audioContext.sampleRate, message.bitrate), chunks: [] }),
+      write(segment, left, right) {
+        const encoded = segment.encoder.encodeBuffer(floatToInt16(left), floatToInt16(right));
+        if (encoded.length) segment.chunks.push(new Uint8Array(encoded));
+      },
+      finish(segment) {
+        const bytes = segment.data.encoder.flush();
+        if (bytes.length) segment.data.chunks.push(new Uint8Array(bytes));
+        // L'export du fichier précédent n'interrompt pas les nouveaux PCM.
+        current.exports = current.exports.then(() => exportMonitoredTrack(current, segment))
+          .catch((error) => {
+            current.exportError = error.message;
+            chrome.runtime.sendMessage({ type: "MONITOR_EXPORT_ERROR", sessionId: current.sessionId, error: error.message }).catch(() => {});
+          });
+      }
+    });
     worklet.port.onmessage = (event) => {
-    if (event.data?.type === "flushed") {
-      flushResolve?.();
-      flushResolve = null;
-      return;
-    }
-    if (event.data?.type !== "pcm") return;
-    if (!current.encoding) return;
-
-    if (!current.audioStarted) {
-      const containsAudio = event.data.left.some((sample) => Math.abs(sample) > 0.000001)
-        || event.data.right.some((sample) => Math.abs(sample) > 0.000001);
-      if (!containsAudio) return;
-      current.audioStarted = true;
-      current.startedAt = performance.now();
-    }
-
-    const left = floatToInt16(event.data.left);
-    const right = floatToInt16(event.data.right);
-    const encoded = encoder.encodeBuffer(left, right);
-    if (encoded.length > 0) {
-      chunks.push(new Uint8Array(encoded));
-    }
-
-    const elapsedSeconds = Math.floor((performance.now() - current.startedAt) / 1000);
-    if (elapsedSeconds !== lastProgressSecond) {
-      lastProgressSecond = elapsedSeconds;
-      chrome.runtime.sendMessage({ type: "AUDIO_PROGRESS", elapsedSeconds }).catch(() => {});
-    }
-    if (
-      current.targetDurationSeconds > 0 &&
-      elapsedSeconds >= Math.ceil(current.targetDurationSeconds + 1)
-    ) {
-      void stopCapture("duration_reached");
-    }
+      if (event.data?.type === "flushed") {
+        current.flushResolve?.();
+        current.flushResolve = null;
+        return;
+      }
+      if (event.data?.type !== "pcm") return;
+      const start = Number.isFinite(event.data.contextStartSeconds)
+        ? current.contextEpochMs + event.data.contextStartSeconds * 1000
+        : Date.now() - event.data.left.length * 1000 / audioContext.sampleRate;
+      current.monitor.pcm(event.data.left, event.data.right, start, Date.now());
+      publishMonitorStatus(current);
     };
 
     stream.getAudioTracks()[0]?.addEventListener("ended", () => {
-    if (capture !== current) return;
-    if (current.encoding) void stopCapture("stream_ended");
-    else void cancelCapture();
+      if (capture === current) void stopMonitoring("stream_ended").catch(console.error);
     });
 
     capture = current;
+    // Spotify en pause n'envoie plus de relevé, ni l'onglet de PCM : cette
+    // horloge exporte le dernier morceau terminé sans attendre le son suivant.
+    current.settleTimer = setInterval(() => {
+      current.monitor.settle(Date.now());
+      publishMonitorStatus(current);
+    }, 1000);
   } catch (error) {
     // Une erreur avant l'affectation de capture ne doit pas laisser un flux orphelin.
     stream.getTracks().forEach((track) => track.stop());
     if (audioContext) await audioContext.close().catch(() => {});
     throw error;
   }
-}
-
-async function beginCapture() {
-  if (!capture) throw new Error("Aucune capture audio n'est armée.");
-  if (capture.encoding) return;
-  capture.startedAt = performance.now();
-  capture.audioStarted = false;
-  capture.encoding = true;
 }
 
 async function flushWorklet(current) {
@@ -167,75 +192,67 @@ async function flushWorklet(current) {
   });
 }
 
-async function stopCapture(reason) {
-  if (stopPromise) {
-    return stopPromise;
-  }
-  if (!capture) {
-    return;
-  }
-  if (!capture.encoding) {
-    await cancelCapture();
-    return;
-  }
+function publishMonitorStatus(current) {
+  const state = current.monitor.status();
+  const signature = JSON.stringify(state);
+  if (signature === current.lastMonitorStatus) return;
+  current.lastMonitorStatus = signature;
+  chrome.runtime.sendMessage({ type: "MONITOR_STATE", sessionId: current.sessionId, state }).catch(() => {});
+}
 
+async function exportMonitoredTrack(current, segment) {
+  const cover = await loadCover(segment.metadata?.artworkUrl);
+  const blob = new Blob([createId3v24Tag(segment.metadata, cover), ...segment.data.chunks], { type: "audio/mpeg" });
+  const url = createDownloadUrl(blob);
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "MONITOR_TRACK_READY", sessionId: current.sessionId, url,
+      filename: recordingFilename(segment.metadata), metadata: segment.metadata,
+      durationSeconds: segment.durationSeconds, reason: segment.reason,
+      expectedDurationSeconds: segment.expectedDurationSeconds, journal: current.monitor.journal.slice()
+    });
+    if (!response?.ok) throw new Error(response?.error || "Le téléchargement du morceau a échoué.");
+  } catch (error) {
+    releaseDownloadUrl(url);
+    throw error;
+  }
+  settleDownloadUrl(url, response);
+}
+
+async function stopMonitoring(reason = "manual") {
+  if (stopPromise) return stopPromise;
+  const current = capture;
+  if (!current?.monitor) return;
   stopPromise = (async () => {
-    const current = capture;
-    capture = null;
+    clearInterval(current.settleTimer);
     current.source.disconnect();
     await flushWorklet(current);
     current.worklet.port.onmessage = null;
     current.worklet.disconnect();
     current.silentOutput.disconnect();
+    capture = null;
     current.stream.getTracks().forEach((track) => track.stop());
-
-    const finalBytes = current.encoder.flush();
-    if (finalBytes.length > 0) {
-      current.chunks.push(new Uint8Array(finalBytes));
-    }
+    current.monitor.stop(reason);
     await current.audioContext.close();
-
-    const cover = await loadCover(current.metadata?.artworkUrl);
-    const id3 = createId3v24Tag(current.metadata, cover);
-    const blob = new Blob([id3, ...current.chunks], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-    const durationSeconds = Math.max(0, Math.round((performance.now() - current.startedAt) / 1000));
-
-    const response = await chrome.runtime.sendMessage({
-      type: "AUDIO_READY",
-      url,
-      filename: recordingFilename(current.metadata),
-      durationSeconds,
-      reason
-    });
-    if (!response?.ok) {
-      URL.revokeObjectURL(url);
-      throw new Error(response?.error || "Le téléchargement du MP3 a échoué.");
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    await current.exports;
+    await chrome.runtime.sendMessage({ type: "MONITOR_STOPPED", sessionId: current.sessionId, error: current.exportError,
+      journal: current.monitor.journal.slice() });
   })();
+  try { await stopPromise; } finally { stopPromise = null; }
+}
 
-  try {
-    await stopPromise;
-  } finally {
-    stopPromise = null;
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (["PLAYER_SNAPSHOT", "PLAYER_ENDED"].includes(message?.type) && isCapturedSpotifyTab(sender)) {
+    capture.monitor.snapshot(message.snapshot);
+    publishMonitorStatus(capture);
+    return false;
   }
-}
-
-async function cancelCapture() {
-  if (!capture) return;
-  const current = capture;
-  capture = null;
-  current.source.disconnect();
-  current.worklet.port.onmessage = null;
-  current.worklet.disconnect();
-  current.silentOutput.disconnect();
-  current.stream.getTracks().forEach((track) => track.stop());
-  await current.audioContext.close();
-}
-
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.target !== "offscreen") {
+    return false;
+  }
+  if (!isExtensionSender(sender)) {
+    sendResponse({ ok: false, error: "Commande audio refusée : émetteur non autorisé." });
     return false;
   }
 
@@ -243,22 +260,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({
       ok: true,
       active: Boolean(capture),
-      encoding: Boolean(capture?.encoding),
-      elapsedSeconds: capture?.encoding
-        ? Math.max(0, Math.floor((performance.now() - capture.startedAt) / 1000))
-        : 0
+      pendingDownloads: pendingDownloads.size,
+      mode: capture?.mode ?? null,
+      sessionId: capture?.sessionId ?? null,
+      monitorState: capture?.monitor?.status() ?? null
     });
     return false;
   }
 
+  if (message.type === "OFFSCREEN_UPDATE_MONITOR") {
+    if (!capture?.monitor || message.sessionId !== capture.sessionId) {
+      sendResponse({ ok: false, error: "La surveillance n'est plus active." });
+    } else {
+      capture.monitor.snapshot(message.snapshot);
+      publishMonitorStatus(capture);
+      sendResponse({ ok: true });
+    }
+    return false;
+  }
+
+  // L'annulation et l'arrêt finalisent tous deux la capture : le service de
+  // fond écarte lui-même les MP3 d'une session abandonnée ou expirée.
   const run = message.type === "OFFSCREEN_START_CAPTURE"
     ? startCapture(message)
-    : message.type === "OFFSCREEN_BEGIN_CAPTURE"
-      ? beginCapture()
-      : message.type === "OFFSCREEN_CANCEL_CAPTURE"
-        ? cancelCapture()
-    : message.type === "OFFSCREEN_STOP_CAPTURE"
-      ? stopCapture(message.reason || "manual")
+    : ["OFFSCREEN_CANCEL_CAPTURE", "OFFSCREEN_STOP_MONITORING"].includes(message.type)
+      ? stopMonitoring(message.reason || "manual")
       : Promise.reject(new Error("Commande audio inconnue."));
 
   run

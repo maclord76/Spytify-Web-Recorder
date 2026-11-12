@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Spytify Web Recorder",
   "description": "Enregistre localement le son de l'onglet Spotify Web actif, sans programme compagnon.",
-  "version": "1.14.4",
+  "version": "1.18.5",
   "minimum_chrome_version": "116",
   "permissions": [
     "debugger",
@@ -11,8 +11,7 @@
     "scripting",
     "sidePanel",
     "storage",
-    "tabCapture",
-    "tabs"
+    "tabCapture"
   ],
   "host_permissions": [
     "https://open.spotify.com/*",
@@ -42,7 +41,7 @@
   "content_scripts": [
     {
       "matches": ["https://open.spotify.com/*"],
-      "js": ["content.js"],
+      "js": ["spotify-player.js", "content.js"],
       "run_at": "document_idle"
     }
   ]

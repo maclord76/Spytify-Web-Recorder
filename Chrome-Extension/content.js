@@ -1,6 +1,11 @@
-function firstText(selectors) {
+// Défini par spotify-player.js, chargé juste avant ce script. isPlayingLabel
+// renvoie true si le bouton propose la pause (lecture en cours), false s'il
+// propose la lecture, null pour un libellé inconnu.
+const { isPlayingLabel, parseTime, TITLE_SELECTORS } = globalThis.SpytifyPlayer;
+
+function firstText(selectors, root = document) {
   for (const selector of selectors) {
-    const value = document.querySelector(selector)?.textContent?.trim();
+    const value = root.querySelector(selector)?.textContent?.trim();
     if (value) return value;
   }
   return "";
@@ -16,9 +21,9 @@ function sendRuntimeMessage(message) {
   }
 }
 
-function allTexts(selectors) {
+function allTexts(selectors, root = document) {
   for (const selector of selectors) {
-    const values = [...document.querySelectorAll(selector)]
+    const values = [...root.querySelectorAll(selector)]
       .map((element) => element.textContent?.trim())
       .filter(Boolean);
     if (values.length) return [...new Set(values)].join(", ");
@@ -39,12 +44,37 @@ function metadataFromDocumentTitle() {
   return { title: "", artist: "" };
 }
 
+// Métadonnées que Spotify publie pour les commandes multimédias de Chrome :
+// elles décrivent l'élément du lecteur en lecture comme en pause, quelle que
+// soit sa mise en page. Le 23 octobre 2026, aucun sélecteur de titre ne
+// trouvait le lecteur inférieur (« Emerald Rush », morceau avec clip) : seul
+// l'onglet nommait le morceau, et seulement pendant la lecture.
+function sessionMetadata() {
+  try {
+    const metadata = navigator.mediaSession?.metadata;
+    if (!metadata) return null;
+    const artwork = [...(metadata.artwork || [])]
+      .sort((first, second) => (parseInt(second.sizes) || 0) - (parseInt(first.sizes) || 0))[0];
+    return {
+      title: String(metadata.title || "").trim(),
+      artist: String(metadata.artist || "").trim(),
+      album: String(metadata.album || "").trim(),
+      artworkUrl: artwork?.src || ""
+    };
+  } catch {
+    return null;
+  }
+}
+
 function pageTrackPlayButton() {
   const main = document.querySelector("main");
+  // Le gros bouton du morceau est dans sa barre d'actions, quelle que soit la
+  // langue. Les libellés connus servent de repli si cette structure change ;
+  // ils écartent les boutons « Lire : … » des recommandations.
+  const actionBarButton = main?.querySelector('[data-testid="action-bar-row"] button[data-testid="play-button"]');
+  if (actionBarButton?.getClientRects?.().length > 0) return actionBarButton;
   const buttons = [...(main?.querySelectorAll('button[data-testid="play-button"]') || [])];
-  const pageButtons = buttons.filter((button) =>
-    /^(lecture|play|pause|mettre en pause)$/i.test(button.getAttribute("aria-label")?.trim() || "")
-  );
+  const pageButtons = buttons.filter((button) => isPlayingLabel(button.getAttribute("aria-label")) !== null);
   return pageButtons.find((button) => button.getClientRects?.().length > 0) || null;
 }
 
@@ -103,11 +133,6 @@ function pageTrackMetadata() {
   };
 }
 
-function parseTime(value) {
-  const parts = String(value || "").trim().split(":").map(Number);
-  if (!parts.length || parts.some(Number.isNaN)) return 0;
-  return parts.reduce((seconds, part) => seconds * 60 + part, 0);
-}
 
 function playbackMediaElement() {
   // Spotify utilise aussi des vidéos décoratives (Canvas) qui peuvent jouer
@@ -119,102 +144,46 @@ function playbackMediaElement() {
     || null;
 }
 
-function normalizeTrackTitle(value) {
-  return String(value || "").normalize("NFC").trim().toLocaleLowerCase("fr");
-}
 
-function bottomPlayerState() {
-  const button = document.querySelector('[data-testid="control-button-playpause"]');
-  const title = firstText([
-    '[data-testid="context-item-info-title"] a',
-    '[data-testid="now-playing-widget"] [data-testid="context-item-link"]',
-    '[data-testid="context-item-link"]'
-  ]);
-  const label = button?.getAttribute("aria-label") || "";
-  const media = playbackMediaElement();
-  return {
-    button,
-    title,
-    isPlaying: button
-      ? /pause|mettre en pause/i.test(label)
-      : Boolean(media && !media.paused && !media.ended)
-  };
-}
+const AD_LABEL = /^(?:publicité|advertisement|advertising|annonce publicitaire|publicidad|anuncio|werbung|pubblicità|publicidade|anúncio|advertentie)(\s*[•·:\-–]\s*\d+\s*(?:sur|of|de|von|di|van)\s*\d+)?$/iu;
 
-async function waitForBottomTrack(expectedTitle, timeoutMilliseconds = 8000) {
-  const normalizedExpectedTitle = normalizeTrackTitle(expectedTitle);
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    const state = bottomPlayerState();
-    if (
-      normalizedExpectedTitle &&
-      normalizeTrackTitle(state.title) === normalizedExpectedTitle &&
-      isButtonClickable(state.button)
-    ) {
-      return state;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return null;
-}
-
-async function waitForBottomPlayback(expectedTitle, timeoutMilliseconds = 5000) {
-  const normalizedExpectedTitle = normalizeTrackTitle(expectedTitle);
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    const state = bottomPlayerState();
-    if (
-      normalizeTrackTitle(state.title) === normalizedExpectedTitle &&
-      state.isPlaying
-    ) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return false;
-}
-
-async function ensurePreparedTrackPaused(expectedTitle, timeoutMilliseconds = 3000) {
-  let state = bottomPlayerState();
-  if (normalizeTrackTitle(state.title) !== normalizeTrackTitle(expectedTitle)) return false;
-  if (!state.isPlaying) return true;
-
-  const pageButton = pageTrackPlayButton();
-  const pageLabel = pageButton?.getAttribute("aria-label") || "";
-  if (!isButtonClickable(pageButton) || !/pause|mettre en pause/i.test(pageLabel)) {
-    return false;
-  }
-  pageButton.click();
-
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    state = bottomPlayerState();
-    if (
-      normalizeTrackTitle(state.title) === normalizeTrackTitle(expectedTitle) &&
-      !state.isPlaying
-    ) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return false;
+function playerAdvertisement(root, hasTrackMetadata) {
+  // Observer le lecteur uniquement : les bannières Premium et les résultats
+  // de recherche ne signifient pas qu'une publicité est en cours de lecture.
+  const marker = root.querySelector('[data-testid="ad-title"], [data-testid="ad-subtitle"], [data-testid="ad-player"], [data-testid="advertisement"]');
+  if (marker?.getClientRects?.().length) return true;
+  const labels = (root.innerText || root.textContent || "").split(/\n/).map(text => text.trim());
+  return labels.some(text => {
+    const match = text.match(AD_LABEL);
+    // Un vrai morceau intitulé « Publicité » reste un morceau lorsque son
+    // titre et ses artistes sont identifiés dans le lecteur.
+    return Boolean(match && (match[1] || !hasTrackMetadata));
+  });
 }
 
 function playerSnapshot() {
   const fallback = metadataFromDocumentTitle();
-  const title = firstText([
-    '[data-testid="context-item-info-title"] a',
-    '[data-testid="now-playing-widget"] [data-testid="context-item-link"]',
-    '[data-testid="context-item-link"]'
-  ]) || fallback.title;
-  const artist = allTexts([
+  const player = document.querySelector('[data-testid="now-playing-bar"]') ||
+    document.querySelector('[data-testid="now-playing-widget"]');
+  const metadataRoot = player || document;
+  const session = sessionMetadata();
+  const playerTitle = firstText(TITLE_SELECTORS, metadataRoot) || session?.title || "";
+  const title = playerTitle || fallback.title;
+  const playerArtist = allTexts([
+    '[data-testid="now-playing-widget"] a[data-testid="context-item-info-artist"]',
+    'a[data-testid="context-item-info-artist"]',
     '[data-testid="context-item-info-artist"] a',
     '[data-testid="now-playing-widget"] [data-testid="context-item-info-artist"] a'
-  ]) || fallback.artist;
+  ], metadataRoot) || session?.artist || "";
+  const artist = playerArtist || fallback.artist;
+  const hasTrackMetadata = Boolean(playerTitle && playerArtist);
+  // Pour une annonce, Spotify publie son libellé traduit sans artiste.
+  const sessionAdvertisement = Boolean(session && !session.artist && AD_LABEL.test(session.title));
+  const isAdvertisement = sessionAdvertisement || Boolean(player && playerAdvertisement(player, hasTrackMetadata));
   const album = firstText([
     '[data-testid="context-item-info-album"] a',
     'a[href*="/album/"][data-testid]'
-  ]);
+  ]) || session?.album || "";
   const artwork = document.querySelector(
     '[data-testid="cover-art-image"], [data-testid="now-playing-widget"] img'
   );
@@ -223,84 +192,54 @@ function playerSnapshot() {
   const media = playbackMediaElement();
   const domPosition = parseTime(firstText(['[data-testid="playback-position"]']));
   const domDuration = parseTime(firstText(['[data-testid="playback-duration"]']));
-  const positionSeconds = Number.isFinite(media?.currentTime) && media.currentTime > 0
-    ? media.currentTime
-    : domPosition;
-  const durationSeconds = Number.isFinite(media?.duration) && media.duration > 0
+  const progress = document.querySelector('[data-testid="playback-progressbar"] input[type="range"]');
+  const maximum = Number(progress?.max);
+  // Spotify expose actuellement des millisecondes dans son contrôle natif.
+  // Confirmer l'unité avec la durée affichée avant de l'utiliser.
+  const progressScale = domDuration > 0 && Math.abs(maximum / 1000 - domDuration) < 2 ? 1000
+    : domDuration > 0 && Math.abs(maximum - domDuration) < 2 ? 1 : null;
+  const progressPosition = progressScale && Number.isFinite(Number(progress?.value))
+    ? Math.max(0, Math.min(maximum, Number(progress.value))) / progressScale : null;
+  // La barre peut n'avancer que par pas de 5 s (« 5 » affiché dès 2,7 s
+  // réelles, relevé du 10 octobre 2026) alors que le texte suit la seconde.
+  // Elle ne sert qu'à affiner un texte présent, jamais à le contredire.
+  const hasDomPosition = Boolean(firstText(['[data-testid="playback-position"]']));
+  const refinesText = progressPosition !== null && progressPosition >= domPosition && progressPosition < domPosition + 1;
+  const precisePosition = progressPosition !== null && (refinesText || !hasDomPosition) ? progressPosition : domPosition;
+  // L'élément audio peut encore porter l'horloge/ended de la publicité après
+  // le retour du titre. Le lecteur visible reste la référence lorsqu'il existe.
+  const usePlayerTiming = Boolean(player && domDuration > 0 && document.querySelector('[data-testid="playback-position"]'));
+  const useMediaPosition = !usePlayerTiming && !isAdvertisement && Number.isFinite(media?.currentTime) && media.currentTime > 0;
+  const positionSeconds = useMediaPosition ? media.currentTime : precisePosition;
+  const durationSeconds = !usePlayerTiming && !isAdvertisement && Number.isFinite(media?.duration) && media.duration > 0
     ? media.duration
-    : domDuration;
-  const isPlaying = media
+    : progressScale ? maximum / progressScale : domDuration;
+  const controlState = isPlayingLabel(controlLabel);
+  const isPlaying = usePlayerTiming && playPause && controlState !== null ? controlState : media
     ? !media.paused && !media.ended
-    : /pause|mettre en pause/i.test(controlLabel);
+    : controlState === true;
 
   return {
+    observedAtMs: Date.now(),
+    isAdvertisement,
+    hasTrackMetadata,
     metadata: {
       title,
       artist,
       album,
-      artworkUrl: artwork?.currentSrc || artwork?.src || ""
+      artworkUrl: artwork?.currentSrc || artwork?.src || session?.artworkUrl || ""
     },
     positionSeconds,
+    // Origine de la position, pour expliquer un saut dans le diagnostic.
+    positionSource: useMediaPosition ? "media" : precisePosition === progressPosition ? "progress" : "text",
     durationSeconds,
     isPlaying,
-    ended: Boolean(media?.ended) || (
+    ended: (!usePlayerTiming && Boolean(media?.ended)) || (
       durationSeconds > 0 &&
       positionSeconds >= durationSeconds - 0.25 &&
       !isPlaying
     ),
     pageUrl: location.href
-  };
-}
-
-async function startPlayback(requestedTitle = "") {
-  const ready = await waitForPageTrackReady();
-  if (!ready.ready) return false;
-  if (
-    requestedTitle &&
-    normalizeTrackTitle(ready.metadata.title) !== normalizeTrackTitle(requestedTitle)
-  ) {
-    return false;
-  }
-
-  const expectedTitle = ready.metadata.title;
-  let currentBottomState = bottomPlayerState();
-  if (
-    normalizeTrackTitle(currentBottomState.title) === normalizeTrackTitle(expectedTitle) &&
-    currentBottomState.isPlaying
-  ) {
-    return true;
-  }
-
-  currentBottomState = await waitForBottomTrack(expectedTitle);
-  if (!currentBottomState || !isButtonClickable(currentBottomState.button)) return false;
-  const playerLabel = currentBottomState.button.getAttribute("aria-label") || "";
-  if (/pause|mettre en pause/i.test(playerLabel)) return true;
-  currentBottomState.button.click();
-  return waitForBottomPlayback(expectedTitle);
-}
-
-async function preparePlayback() {
-  const ready = await waitForPageTrackReady();
-  if (!ready.ready) return { prepared: false, metadata: ready.metadata };
-
-  const expectedTitle = ready.metadata.title;
-  const currentBottomState = bottomPlayerState();
-  if (normalizeTrackTitle(currentBottomState.title) === normalizeTrackTitle(expectedTitle)) {
-    const paused = await ensurePreparedTrackPaused(expectedTitle);
-    return { prepared: paused, metadata: ready.metadata };
-  }
-
-  const pageLabel = ready.button.getAttribute("aria-label") || "";
-  if (!/pause|mettre en pause/i.test(pageLabel)) {
-    ready.button.click();
-  }
-  const loadedBottomState = await waitForBottomTrack(expectedTitle);
-  const paused = loadedBottomState
-    ? await ensurePreparedTrackPaused(expectedTitle)
-    : false;
-  return {
-    prepared: paused,
-    metadata: ready.metadata
   };
 }
 
@@ -310,6 +249,7 @@ function observeMediaEnd() {
     if (observedMedia.has(media)) continue;
     observedMedia.add(media);
     media.addEventListener("ended", () => {
+      if (!observing) return;
       const current = playbackMediaElement();
       if (current && current !== media && !current.paused && !current.ended) {
         return;
@@ -337,7 +277,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       ok: true,
       metadata: pageTrackMetadata(),
       canPlay: Boolean(button),
-      isPlaying: /pause|mettre en pause/i.test(button?.getAttribute("aria-label") || "")
+      isPlaying: isPlayingLabel(button?.getAttribute("aria-label")) === true
     });
     return;
   }
@@ -347,39 +287,82 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         ok: true,
         ready: state.ready,
         metadata: state.metadata,
-        isPlaying: /pause|mettre en pause/i.test(
-          state.button?.getAttribute("aria-label") || ""
-        )
+        isPlaying: isPlayingLabel(state.button?.getAttribute("aria-label")) === true
       }))
       .catch((error) => sendResponse({ ok: false, ready: false, error: error.message }));
-    return true;
-  }
-  if (message?.type === "START_PLAYBACK") {
-    startPlayback(message.expectedTitle)
-      .then((playing) => sendResponse({ ok: true, playing }))
-      .catch((error) => sendResponse({ ok: false, playing: false, error: error.message }));
-    return true;
-  }
-  if (message?.type === "PREPARE_TRACK") {
-    preparePlayback()
-      .then((state) => sendResponse({ ok: true, ...state }))
-      .catch((error) => sendResponse({ ok: false, prepared: false, error: error.message }));
     return true;
   }
 });
 
 let lastSent = "";
-setInterval(() => {
+function publishPlayerSnapshot() {
+  if (!observing) return;
   observeMediaEnd();
   const snapshot = playerSnapshot();
   const signature = JSON.stringify([
     snapshot.metadata.title,
     snapshot.metadata.artist,
     snapshot.positionSeconds,
-    snapshot.isPlaying
+    snapshot.isPlaying,
+    snapshot.ended,
+    snapshot.isAdvertisement,
+    snapshot.hasTrackMetadata
   ]);
   if (signature !== lastSent) {
     lastSent = signature;
     sendRuntimeMessage({ type: "PLAYER_SNAPSHOT", snapshot });
   }
-}, 1000);
+}
+
+let observedPlayer = null;
+let playerObserver = null;
+let observing = false;
+let snapshotTimer = null;
+function watchPlayerAdvertisements() {
+  if (!observing || typeof MutationObserver !== "function") return;
+  const player = document.querySelector('[data-testid="now-playing-bar"]') ||
+    document.querySelector('[data-testid="now-playing-widget"]');
+  if (player === observedPlayer) return;
+  playerObserver?.disconnect();
+  observedPlayer = player;
+  if (!player) return;
+  // Recevoir le changement publicitaire dès le rendu du player, également
+  // lorsque Chrome ralentit les minuteries d'un onglet en arrière-plan.
+  playerObserver = new MutationObserver(publishPlayerSnapshot);
+  playerObserver.observe(player, { childList: true, subtree: true, characterData: true });
+}
+// Hors enregistrement ou surveillance, le script reste en veille : aucune
+// minuterie, aucun observateur et aucun message ne réveille le service de fond.
+// Le service de fond publie playerObservation dans le stockage local.
+function setObservation(active) {
+  if (active === observing) return;
+  observing = active;
+  if (active) {
+    lastSent = "";
+    watchPlayerAdvertisements();
+    publishPlayerSnapshot();
+    snapshotTimer = setInterval(() => {
+      watchPlayerAdvertisements();
+      publishPlayerSnapshot();
+    }, 250);
+    return;
+  }
+  clearInterval(snapshotTimer);
+  snapshotTimer = null;
+  playerObserver?.disconnect();
+  playerObserver = null;
+  observedPlayer = null;
+}
+
+try {
+  chrome.storage?.local.get("playerObservation")
+    .then((saved) => setObservation(Boolean(saved.playerObservation)))
+    .catch(() => {});
+  chrome.storage?.onChanged.addListener((changes, area) => {
+    if (area === "local" && changes.playerObservation) {
+      setObservation(Boolean(changes.playerObservation.newValue));
+    }
+  });
+} catch {
+  // Contexte invalidé après un rechargement de l'extension : rester en veille.
+}

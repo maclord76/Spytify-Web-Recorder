@@ -3,6 +3,7 @@ node_modules/
 Chrome-Extension/node_modules/
 *.zip
 *.mp3
+sauvegardes/
 
 # Traces et profils de navigateur locaux
 *.log

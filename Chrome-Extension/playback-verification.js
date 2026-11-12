@@ -1,6 +1,6 @@
-function normalizeTrackTitle(value) {
-  return String(value || "").normalize("NFC").trim().toLocaleLowerCase("fr");
-}
+import "./spotify-player.js";
+
+const { normalizeTitle } = globalThis.SpytifyPlayer;
 
 function numericPosition(value) {
   const position = Number(value);
@@ -17,7 +17,7 @@ export async function waitForConfirmedPlayback(
   const stablePlayingMilliseconds = Number(options.stablePlayingMilliseconds) || 1500;
   const now = options.now || Date.now;
   const wait = options.wait || ((delay) => new Promise((resolve) => setTimeout(resolve, delay)));
-  const normalizedExpectedTitle = normalizeTrackTitle(expectedTitle);
+  const normalizedExpectedTitle = normalizeTitle(expectedTitle);
   if (!normalizedExpectedTitle) return false;
 
   const deadline = now() + timeoutMilliseconds;
@@ -33,7 +33,11 @@ export async function waitForConfirmedPlayback(
       // Une lecture DOM manquée ne doit pas invalider toute la tentative.
     }
 
-    if (normalizeTrackTitle(state?.title) === normalizedExpectedTitle) {
+    // Une publicité en cours vaut démarrage : Spotify enchaînera lui-même sur
+    // le morceau, qu'un clic sur le bouton lecture mettrait en pause.
+    if (state?.advertisement) return true;
+
+    if (normalizeTitle(state?.title) === normalizedExpectedTitle) {
       const position = numericPosition(state?.positionSeconds);
       if (initialPosition === null) initialPosition = position;
 

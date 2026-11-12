@@ -15,8 +15,31 @@
           <p>Enregistreur MP3 autonome</p>
         </div>
         <a class="spotify-link" href="https://open.spotify.com/" target="_blank" rel="noopener noreferrer" title="Ouvrir Spotify dans un nouvel onglet" aria-label="Ouvrir Spotify dans un nouvel onglet">Spotify ↗</a>
+        <button
+          id="copy-diagnostics"
+          class="icon-button"
+          type="button"
+          title="Copier le diagnostic technique (confirmation demandée)"
+          aria-label="Copier le diagnostic technique (confirmation demandée)"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M9 6.5a3 3 0 0 1 6 0"></path>
+            <path d="M9.6 5 8.2 3.4M14.4 5 15.8 3.4"></path>
+            <rect x="8" y="7.5" width="8" height="11" rx="4"></rect>
+            <path d="M8 11H4.5M8 15.5H5.5M16 11h3.5M16 15.5h2.5M12 7.5v11"></path>
+          </svg>
+        </button>
       </header>
 
+      <div class="setting mode-setting">
+        <label for="recorder-mode">Mode</label>
+        <select id="recorder-mode">
+          <option value="single">Un morceau</option>
+          <option value="monitor">Surveillance</option>
+        </select>
+      </div>
+
+      <div id="single-track-controls">
       <label for="track-url">URL du morceau Spotify</label>
       <input
         id="track-url"
@@ -25,7 +48,7 @@
         placeholder="https://open.spotify.com/track/…"
         autocomplete="off"
       >
-      <button id="open-track" class="secondary" type="button">1. Ouvrir le morceau</button>
+      </div>
 
       <div class="setting">
         <label for="bitrate">Qualité MP3</label>
@@ -37,7 +60,7 @@
         </select>
       </div>
 
-      <button id="start-recording" class="primary" type="button">2. Préparer le morceau</button>
+      <button id="start-recording" class="primary" type="button">Enregistrer le morceau</button>
       <button id="stop-recording" class="danger" type="button" hidden>Arrêter et enregistrer le MP3</button>
 
       <section id="status" class="status" aria-live="polite">
@@ -46,11 +69,13 @@
           <strong id="status-title">Prêt</strong>
           <time id="elapsed">00:00</time>
         </div>
-        <p id="status-message">Ouvrez un morceau dans Spotify Web.</p>
+        <p id="status-message">Collez l'URL d'un morceau Spotify.</p>
         <p id="track-name" class="track-name" hidden></p>
+        <p id="monitor-count" class="hint" hidden>0 MP3 téléchargé(s)</p>
+        <p id="monitor-filename" class="hint" hidden></p>
       </section>
 
-      <p class="hint">Démarrer lance automatiquement la lecture. La fin du lecteur ou le passage au morceau suivant arrête et télécharge le MP3.</p>
+      <p id="mode-hint" class="hint"></p>
       <p id="extension-version" class="hint"></p>
     </main>
     <script type="module" src="popup.js"></script>
